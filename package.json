@@ -1,6 +1,6 @@
 {
   "name": "@module-federation/mcp-apps",
-  "version": "0.0.2-beta.6",
+  "version": "0.0.0-alpha.1",
   "type": "module",
   "description": "MCP Apps Server for rendering Module Federation components as interactive UIs in AI Agents",
   "license": "MIT",
@@ -16,8 +16,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/module-federation/mcp-apps.git",
-    "directory": "packages/module-federation-mcp"
+    "url": "https://github.com/module-federation/mcp-apps.git"
   },
   "homepage": "https://github.com/module-federation/mcp-apps#readme",
   "bugs": {
@@ -54,7 +53,11 @@
     "watch:ui": "rsbuild build --watch",
     "dev": "tsc --watch",
     "start": "node dist/index.js --config module-federation-examples/basic/mcp_apps.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build",
+    "changeset": "changeset",
+    "version:bump": "changeset version",
+    "release": "changeset publish"
   },
   "dependencies": {
     "@module-federation/enhanced": "^2.0.1",
@@ -74,6 +77,11 @@
     "@types/react-dom": "~18.3.1",
     "@rsbuild/core": "^1.4.0",
     "@rsbuild/plugin-react": "^1.4.0",
+    "@changesets/cli": "^2.27.0",
     "typescript": "^5.7.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
