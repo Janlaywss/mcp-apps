@@ -25,7 +25,7 @@ jobs:
         run: pnpm i
 
       - name: Build
-        run: pnpm run build --if-present
+        run: pnpm run build
 
       - name: Publish to pkg.pr.new
         run: pnpm dlx pkg-pr-new publish
