@@ -7,9 +7,7 @@ jobs:
   publish-latest:
     name: Publish latest (npm)
     runs-on: ubuntu-latest
-    environment: npm
     permissions:
-      contents: write  # changeset needs to push git tags
       id-token: write  # OIDC trusted publishing
     steps:
       - name: Checkout
@@ -21,11 +19,17 @@ jobs:
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '22'  # Minimum: 22.14.0 for OIDC trusted publishing
-          registry-url: 'https://registry.npmjs.org'
+          node-version: 20
           cache: 'pnpm'
+          cache-dependency-path: '**/pnpm-lock.yaml'
+
+      # Update npm to the latest version to enable OIDC
+      - name: Update npm
+        run: |
+          npm install -g npm@latest
+          npm --version
 
       - name: Install dependencies
         run: pnpm i
@@ -34,4 +38,4 @@ jobs:
         run: pnpm run build
 
       - name: Publish to npm
-        run: pnpm changeset publish --tag latest
+        run: npm publish
