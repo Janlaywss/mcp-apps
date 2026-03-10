@@ -88,7 +88,7 @@ pnpm run dev
 
 Then register the MCP server with Claude Desktop — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
-**Option 1: Using npx (recommended, once published)**
+**Option 1: Using npx (recommended)**
 
 ```json
 {
@@ -97,7 +97,7 @@ Then register the MCP server with Claude Desktop — edit `~/Library/Application
       "command": "npx",
       "args": [
         "-y",
-        "@module-federation/mcp-apps@latest",
+        "https://pkg.pr.new/@module-federation/mcp-apps@29a2cc7",
         "--config",
         "/absolute/path/to/module-federation-mcp/module-federation-examples/basic/mcp_apps.json",
         "--stdio"
@@ -106,6 +106,30 @@ Then register the MCP server with Claude Desktop — edit `~/Library/Application
   }
 }
 ```
+
+> **nvm users:** Claude Desktop does not inherit your shell's PATH, so `npx` may resolve to the wrong Node version (e.g. an old v16). Use the full path to `npx` and pin PATH via `env`:
+> ```bash
+> which npx  # e.g. /Users/you/.nvm/versions/node/v22.21.1/bin/npx
+> ```
+> ```json
+> {
+>   "mcpServers": {
+>     "module-federation": {
+>       "command": "/Users/you/.nvm/versions/node/v22.21.1/bin/npx",
+>       "args": [
+>         "-y",
+>         "https://pkg.pr.new/@module-federation/mcp-apps@29a2cc7",
+>         "--config",
+>         "/absolute/path/to/module-federation-mcp/module-federation-examples/basic/mcp_apps.json",
+>         "--stdio"
+>       ],
+>       "env": {
+>         "PATH": "/Users/you/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+>       }
+>     }
+>   }
+> }
+> ```
 
 **Option 2: Run from a local build**
 
@@ -209,7 +233,7 @@ Or manually create `mcp_apps.json`:
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
-**Option 1: Using npx (recommended, once published)**
+**Option 1: Using npx (recommended)**
 
 ```json
 {
@@ -218,7 +242,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "npx",
       "args": [
         "-y",
-        "@module-federation/mcp-apps@latest",
+        "https://pkg.pr.new/@module-federation/mcp-apps@29a2cc7",
         "--config",
         "/absolute/path/to/mcp_apps.json",
         "--stdio"
@@ -227,6 +251,30 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   }
 }
 ```
+
+> **nvm users:** Claude Desktop does not inherit your shell's PATH, so `npx` may resolve to the wrong Node version (e.g. an old v16). Use the full path to `npx` and pin PATH via `env`:
+> ```bash
+> which npx  # e.g. /Users/you/.nvm/versions/node/v22.21.1/bin/npx
+> ```
+> ```json
+> {
+>   "mcpServers": {
+>     "module-federation": {
+>       "command": "/Users/you/.nvm/versions/node/v22.21.1/bin/npx",
+>       "args": [
+>         "-y",
+>         "https://pkg.pr.new/@module-federation/mcp-apps@29a2cc7",
+>         "--config",
+>         "/absolute/path/to/mcp_apps.json",
+>         "--stdio"
+>       ],
+>       "env": {
+>         "PATH": "/Users/you/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+>       }
+>     }
+>   }
+> }
+> ```
 
 **Option 2: Run from a local build**
 
@@ -350,6 +398,17 @@ npm run typecheck
    - Component renders with tool input as props
 
 ## Troubleshooting
+
+### Server Disconnected
+
+If you see "Server disconnected" immediately after starting Claude Desktop, the most common cause with nvm is that Claude launches the MCP server with the wrong Node.js version.
+
+Check the logs to confirm:
+```bash
+cat ~/Library/Logs/Claude/mcp-server-module-federation.log
+```
+
+If you see a `TypeError` from `@hono/node-server` or a warning about an unsupported Node version, follow the **nvm users** note in the [Option 1](#option-1-using-npx-recommended) config above to use the full path to `npx` and pin `PATH` via `env`.
 
 ### Tools Not Showing
 
