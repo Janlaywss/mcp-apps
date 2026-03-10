@@ -105,9 +105,13 @@ const DeployWizardStep3: React.FC<DeployWizardStep3Props> = ({
     setCurrentStageIdx(DEPLOY_STAGES.length);
   }, [isStarted]);
 
-  // After deploy finishes, auto-notify Agent with full report
+  // After deploy finishes, auto-notify Agent with full report (dual-channel)
   useEffect(() => {
-    if (!isFinished || reportSent || !mcpApp?.sendMessage) return;
+    if (!isFinished || reportSent) return;
+    const canPostMessage = window.parent !== window;
+    const sendMessage = mcpApp?.sendMessage;
+    const canSendMessage = Boolean(sendMessage);
+    if (!canPostMessage && !canSendMessage) return;
     setReportSent(true);
 
     const totalTime = DEPLOY_STAGES.reduce((acc, s) => acc + s.duration, 0);
@@ -125,20 +129,32 @@ const DeployWizardStep3: React.FC<DeployWizardStep3Props> = ({
       completedAt: new Date().toISOString(),
     };
 
-    mcpApp.sendMessage({
-      role: 'user',
-      content: [{
-        type: 'text',
-        text: [
-          `Deployment complete! Please summarize the result and inform the user.`,
-          ``,
-          `Full deploy report:`,
-          `\`\`\`json`,
-          JSON.stringify(report, null, 2),
-          `\`\`\``,
-        ].join('\n'),
-      }],
-    }).catch(console.error);
+    const messageText = [
+      `Deployment complete! Please summarize the result and inform the user.`,
+      ``,
+      `Full deploy report:`,
+      `\`\`\`json`,
+      JSON.stringify(report, null, 2),
+      `\`\`\``,
+    ].join('\n');
+
+    // Dual-channel: postMessage for AI PAAS iframe, sendMessage for Claude Desktop
+    if (canPostMessage) {
+      window.parent.postMessage(
+        { type: 'mcp-ui-message', role: 'user', content: { type: 'text', text: messageText } },
+        '*'
+      );
+    }
+    if (canSendMessage) {
+      try {
+        sendMessage!({
+          role: 'user',
+          content: [{ type: 'text', text: messageText }],
+        }).catch(console.error);
+      } catch (e) {
+        console.warn('[Step3] sendMessage threw synchronously (expected in AI PAAS):', e);
+      }
+    }
   }, [isFinished, reportSent, hasFailed, mcpApp, appId, appName, env, deployTag, deployNote, rollbackEnabled, notifySlack]);
 
   // Stage status icon

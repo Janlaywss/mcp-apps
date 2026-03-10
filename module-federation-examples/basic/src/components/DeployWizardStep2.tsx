@@ -68,11 +68,11 @@ const DeployWizardStep2: React.FC<DeployWizardStep2Props> = ({
   const isProduction = env === 'production';
   const productionConfirmed = !isProduction || confirmInput === appName;
 
-  // User confirms deploy → sendMessage triggers Step 3
+  // User confirms deploy → sendMessage/postMessage triggers Step 3
   const handleConfirmDeploy = useCallback(async () => {
-    if (!mcpApp?.sendMessage) {
+    if (!mcpApp && window.parent === window) {
       setStatus('error');
-      setStatusMsg('mcpApp.sendMessage unavailable');
+      setStatusMsg('No messaging channel available');
       return;
     }
 
@@ -92,31 +92,37 @@ const DeployWizardStep2: React.FC<DeployWizardStep2Props> = ({
       submittedAt: new Date().toISOString(),
     };
 
-    try {
-      const result = await mcpApp.sendMessage({
-        role: 'user',
-        content: [{
-          type: 'text',
-          text: [
-            `User confirmed deployment in Step 2. Call tool \`deploy_wizard_step3\` immediately to show progress.`,
-            ``,
-            `Full data from Step 1 + Step 2 (pass as-is to Step 3):`,
-            `\`\`\`json`,
-            JSON.stringify(step2Data, null, 2),
-            `\`\`\``,
-            ``,
-            `Call deploy_wizard_step3 directly without asking the user any questions.`,
-          ].join('\n'),
-        }],
-      });
+    const messageText = [
+      `Call tool deploy_wizard_step3 with these arguments:`,
+      `\`\`\`json`,
+      JSON.stringify(step2Data, null, 2),
+      `\`\`\``,
+    ].join('\n');
 
-      if (result?.isError) {
-        setStatus('error');
-        setStatusMsg('Agent rejected the message');
-      } else {
-        setStatus('done');
-        setStatusMsg('✅ Deployment submitted, Step 3 loading...');
+    try {
+      // Dual-channel: postMessage for AI PAAS, sendMessage for Claude Desktop
+      if (window.parent !== window) {
+        window.parent.postMessage({
+          type: 'mcp-ui-message',
+          role: 'user',
+          content: { type: 'text', text: messageText },
+        }, '*');
       }
+
+      if (mcpApp?.sendMessage) {
+        const result = await mcpApp.sendMessage({
+          role: 'user',
+          content: [{ type: 'text', text: messageText }],
+        });
+        if (result?.isError) {
+          setStatus('error');
+          setStatusMsg('Agent rejected the message');
+          return;
+        }
+      }
+
+      setStatus('done');
+      setStatusMsg('✅ Deployment submitted, Step 3 loading...');
     } catch (e: any) {
       setStatus('error');
       setStatusMsg(`❌ ${e.message}`);
@@ -225,6 +231,7 @@ const DeployWizardStep2: React.FC<DeployWizardStep2Props> = ({
             border: '1px solid #e5e7eb',
             borderRadius: '6px',
             color: '#111827',
+            background: '#ffffff',
             boxSizing: 'border-box',
             outline: 'none',
             fontFamily: 'inherit',
@@ -307,6 +314,7 @@ const DeployWizardStep2: React.FC<DeployWizardStep2Props> = ({
               border: `1px solid ${confirmInput && confirmInput !== appName ? '#fca5a5' : confirmInput === appName ? '#86efac' : '#e5e7eb'}`,
               borderRadius: '6px',
               color: '#111827',
+              background: '#ffffff',
               boxSizing: 'border-box',
               outline: 'none',
               fontFamily: 'monospace',

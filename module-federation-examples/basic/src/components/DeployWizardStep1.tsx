@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 
 // ---- Types ----
 interface McpApp {
@@ -38,13 +38,48 @@ const DeployWizardStep1: React.FC<DeployWizardStep1Props> = ({
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const [statusMsg, setStatusMsg] = useState('');
 
+  // Mount-time diagnostics
+  useEffect(() => {
+    console.log('[Step1] Mounted');
+    console.log('[Step1] mcpApp prop:', mcpApp);
+    console.log('[Step1] mcpApp?.sendMessage:', typeof mcpApp?.sendMessage);
+    console.log('[Step1] Is in iframe (window.parent !== window):', window.parent !== window);
+    console.log('[Step1] window.location.href:', window.location.href);
+    try {
+      console.log('[Step1] parent.location.href:', window.parent.location.href);
+    } catch {
+      console.log('[Step1] parent.location.href: (cross-origin, cannot read)');
+    }
+
+    // Listen for any incoming messages from parent to understand host protocol
+    const debugHandler = (e: MessageEvent) => {
+      console.log('[Step1] Incoming postMessage from parent:', {
+        origin: e.origin,
+        data: e.data,
+      });
+    };
+    window.addEventListener('message', debugHandler);
+    return () => window.removeEventListener('message', debugHandler);
+  }, [mcpApp]);
+
   // User clicks "Confirm & Next"
   // Core flow: collect data -> sendMessage to Agent -> Agent triggers Step 2 with data as props
   const handleNext = useCallback(async () => {
-    if (!selectedApp) return;
-    if (!mcpApp?.sendMessage) {
+    console.log('[Step1] handleNext called');
+    console.log('[Step1] selectedApp:', selectedApp);
+    console.log('[Step1] mcpApp:', mcpApp);
+    console.log('[Step1] mcpApp?.sendMessage:', typeof mcpApp?.sendMessage);
+    console.log('[Step1] window.parent === window:', window.parent === window);
+    console.log('[Step1] window.location.href:', window.location.href);
+
+    if (!selectedApp) {
+      console.warn('[Step1] No app selected, aborting');
+      return;
+    }
+    if (!mcpApp && window.parent === window) {
+      console.error('[Step1] No channel available: mcpApp is null/undefined and not in iframe');
       setStatus('error');
-      setStatusMsg('mcpApp.sendMessage unavailable — run inside an MCP context');
+      setStatusMsg('mcpApp unavailable and not running in an iframe — cannot send message');
       return;
     }
 
@@ -60,34 +95,62 @@ const DeployWizardStep1: React.FC<DeployWizardStep1Props> = ({
       confirmedAt: new Date().toISOString(),
     };
 
-    try {
-      const result = await mcpApp.sendMessage({
-        role: 'user',
-        content: [{
-          type: 'text',
-          // This message enters the Agent conversation and directs it to call the next tool.
-          // The structured data below will be extracted and passed as props to Step 2.
-          text: [
-            `User has completed Step 1 of the Deploy Wizard. Call tool \`deploy_wizard_step2\` immediately.`,
-            ``,
-            `Data collected in Step 1 (pass as-is to Step 2):`,
-            `\`\`\`json`,
-            JSON.stringify(step1Data, null, 2),
-            `\`\`\``,
-            ``,
-            `Call deploy_wizard_step2 directly without asking the user any questions.`,
-          ].join('\n'),
-        }],
-      });
+    const messageText = [
+      `Call tool deploy_wizard_step2 with these arguments:`,
+      `\`\`\`json`,
+      JSON.stringify(step1Data, null, 2),
+      `\`\`\``,
+    ].join('\n');
 
-      if (result?.isError) {
-        setStatus('error');
-        setStatusMsg('Agent rejected the message — check MCP permissions');
-      } else {
-        setStatus('done');
-        setStatusMsg('✅ Agent notified, Step 2 loading...');
+    console.log('[Step1] messageText to send:\n', messageText);
+
+    try {
+      // Dual-channel strategy:
+      // - postMessage → AI PAAS (parent frame listens for mcp-ui-message)
+      // - sendMessage → Claude Desktop (triggers real MCP sampling → LLM)
+      // Both are fired when available; each host only handles what it recognises.
+      // Claude Desktop ignores unknown postMessage types; AI PAAS sendMessage only ACKs (safe to ignore).
+      let channelUsed = false;
+
+      if (window.parent !== window) {
+        const payload = {
+          type: 'mcp-ui-message',
+          role: 'user',
+          content: { type: 'text', text: messageText },
+        };
+        console.log('[Step1] Sending postMessage (AI PAAS channel):', payload);
+        window.parent.postMessage(payload, '*');
+        channelUsed = true;
       }
+
+      if (mcpApp?.sendMessage) {
+        console.log('[Step1] Calling mcpApp.sendMessage (Claude Desktop channel)');
+        const result = await mcpApp.sendMessage({
+          role: 'user',
+          content: [{ type: 'text', text: messageText }],
+        });
+        console.log('[Step1] sendMessage result:', result);
+        if (result?.isError) {
+          console.error('[Step1] sendMessage returned isError=true');
+          setStatus('error');
+          setStatusMsg('Agent rejected the message — check MCP permissions');
+          return;
+        }
+        channelUsed = true;
+      }
+
+      if (!channelUsed) {
+        console.error('[Step1] No channel available');
+        setStatus('error');
+        setStatusMsg('No messaging channel available — not running in a supported MCP host');
+        return;
+      }
+
+      setStatus('done');
+      setStatusMsg('✅ Agent notified, Step 2 loading...');
+      console.log('[Step1] Status set to done');
     } catch (e: any) {
+      console.error('[Step1] Exception in handleNext:', e);
       setStatus('error');
       setStatusMsg(`❌ Failed to send: ${e.message}`);
     }
@@ -218,6 +281,7 @@ const DeployWizardStep1: React.FC<DeployWizardStep1Props> = ({
             borderRadius: '6px',
             resize: 'vertical',
             color: '#111827',
+            background: '#ffffff',
             boxSizing: 'border-box',
             outline: 'none',
             fontFamily: 'inherit',
@@ -264,11 +328,14 @@ const DeployWizardStep1: React.FC<DeployWizardStep1Props> = ({
         {status === 'loading' ? '⏳ Notifying agent...' : status === 'done' ? '✅ Done, waiting for Step 2...' : 'Next →'}
       </button>
 
-      {/* Debug: mcpApp status */}
+      {/* Debug: channel status */}
       <div style={{ marginTop: '12px', fontSize: '11px', color: '#9ca3af', textAlign: 'center' }}>
-        mcpApp:{' '}
-        <span style={{ color: mcpApp ? '#16a34a' : '#dc2626' }}>
-          {mcpApp ? '✅ injected' : '❌ missing'}
+        channel:{' '}
+        <span style={{ color: (window.parent !== window || mcpApp?.sendMessage) ? '#16a34a' : '#dc2626' }}>
+          {[
+            window.parent !== window ? 'postMessage' : null,
+            mcpApp?.sendMessage ? 'sendMessage' : null,
+          ].filter(Boolean).join(' + ') || '❌ unavailable'}
         </span>
         {selectedApp && (
           <span style={{ marginLeft: '8px' }}>
