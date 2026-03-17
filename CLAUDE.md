@@ -2,13 +2,21 @@
 
 MCP server that dynamically loads and renders Module Federation components with CORS proxy support.
 
+Published as a single package: **`@module-federation/mcp-apps`**
+
+Exports:
+- `.` — MCP server (Node.js)
+- `./types` — shared TypeScript types
+- `./react` — `<UiToolRenderer>` React component for web-based Agent chat UIs
+
 ## Architecture
 
 ```
 src/index.ts          → Entry point: stdio or HTTP server startup
 src/server.ts         → MCP server: loads mcp_apps.json, registers tools + resources
 src/mcp-app.tsx       → React widget: Module Federation host + global proxy interceptor
-vite.config.ts        → Single-file HTML build (~660KB)
+src/react/            → ./react export — UiToolRenderer component (AppBridge wrapper)
+rsbuild.config.ts     → Single-file HTML build (~660KB)
 ```
 
 ## Core Flow

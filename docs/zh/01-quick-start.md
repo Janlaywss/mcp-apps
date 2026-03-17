@@ -183,7 +183,7 @@ Skill 会自动：
     {
       "name": "my_app",
       "version": "latest",
-      "baseUrl": "http://localhost:3001",
+      "baseUrl": "http://localhost:3001/mf-manifest.json",
       "locale": "en",
       "manifestType": "mf",
       "csp": {

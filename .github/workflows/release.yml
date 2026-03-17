@@ -38,4 +38,4 @@ jobs:
         run: pnpm run build
 
       - name: Publish to npm
-        run: npm publish
+        run: pnpm exec changeset publish

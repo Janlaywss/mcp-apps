@@ -12,7 +12,7 @@
     {
       "name": "my_app",
       "version": "1.2.3",
-      "baseUrl": "https://cdn.example.com/my-app",
+      "baseUrl": "https://cdn.example.com/my-app/mf-manifest.json",
       "locale": "en",
       "manifestType": "mf",
       "csp": {
@@ -92,9 +92,9 @@ CDN base path for the component (without version or locale).
 | `"vmok"` | `{baseUrl}/{version}/{locale}/vmok-manifest.json` |
 
 ```json
-"baseUrl": "http://localhost:3001"
-"baseUrl": "https://cdn.example.com/my-project"
-"baseUrl": "https://unpkg.com/@cloud-public/my-package"
+"baseUrl": "http://localhost:3001/mf-manifest.json"
+"baseUrl": "https://cdn.example.com/my-project/mf-manifest.json"
+"baseUrl": "https://unpkg.com/@cloud-public/my-package/mf-manifest.json"
 ```
 
 ---
@@ -324,7 +324,7 @@ The export name to use from the remote module.
     {
       "name": "my_app",
       "version": "latest",
-      "baseUrl": "http://localhost:3001",
+      "baseUrl": "http://localhost:3001/mf-manifest.json",
       "locale": "en",
       "manifestType": "mf",
       "csp": {
@@ -361,7 +361,7 @@ The export name to use from the remote module.
     {
       "name": "shop_frontend",
       "version": "2.1.0",
-      "baseUrl": "https://cdn.mycompany.com/shop-frontend",
+      "baseUrl": "https://cdn.mycompany.com/shop-frontend/mf-manifest.json",
       "locale": "en",
       "manifestType": "mf",
       "csp": {

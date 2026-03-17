@@ -1,0 +1,429 @@
+---
+title: "Bringing Interactive UI into AI Conversations with Module Federation and MCP Apps"
+date: "2026-03-12"
+authors: ["module-federation-team"]
+tags: ["mcp", "module-federation", "ai", "react", "micro-frontend"]
+description: "How @module-federation/mcp-apps lets you plug your existing frontend components directly into Claude, VS Code, and any MCP-compatible AI host — no extra build pipeline required."
+---
+
+# Bringing Interactive UI into AI Conversations with Module Federation and MCP Apps
+
+AI assistants are no longer just text boxes. With the [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) standard, AI hosts like Claude Desktop, VS Code, and Goose can **render real interactive UI components** inside a conversation. Forms, dashboards, wizards, pickers — all embedded in the chat.
+
+The catch? Someone has to build and serve that UI.
+
+This post introduces **[`@module-federation/mcp-apps`](https://github.com/module-federation/mcp-apps)** — a zero-rebuild bridge that connects your existing Module Federation remotes to any MCP-compatible AI host.
+
+> ⭐ If this looks useful, consider starring the repo: **[module-federation/mcp-apps](https://github.com/module-federation/mcp-apps)**
+
+---
+
+## The Problem: Where Does the UI Come From?
+
+The MCP Apps spec defines a clean protocol: when a tool is called, the server can return a `ui://` resource URI. The host fetches it, renders a sandboxed iframe, and the user gets an interactive component inside the chat.
+
+But the spec says nothing about *how* you produce that HTML blob. The naive approach — and the one most examples show — is to bundle your UI directly into the MCP server's static assets:
+
+```
+┌─────────────────────┐
+│  MCP Server         │
+│  ├── tool-a.html    │  ← React app bundled here
+│  ├── tool-b.html    │  ← another bundle here
+│  └── tool-c.html    │  ← and here...
+└─────────────────────┘
+```
+
+This has a fundamental problem: **your UI now lives in two places**.
+
+Every time a component changes, you have to:
+
+1. Extract it from your main app
+2. Rebuild it with a separate bundling config
+3. Redeploy the MCP server
+4. Hope shared dependencies like React don't version-conflict
+
+If you have 20 tools, that's 20 parallel build artifacts to maintain — a second pipeline running alongside your real frontend.
+
+---
+
+## The Solution: Flip the Model
+
+Instead of pushing UI *into* the MCP server, `@module-federation/mcp-apps` flips the direction. The server holds a lightweight config file (`mcp_apps.json`) that points to **your existing Module Federation CDN remotes**. The UI stays exactly where it belongs — in your frontend deployment pipeline.
+
+```
+mcp_apps.json
+     │
+     │  "load ./DeployWizard from
+     │   https://cdn.example.com/my-app@1.2.3"
+     │
+     ▼
+┌─────────────────────┐         ┌──────────────────────┐
+│  MF MCP Server      │  uri    │ mf_render_container  │
+│  (zero UI code)     │────────▶│  loads MF remote     │
+│                     │         │  renders component   │
+└─────────────────────┘         └──────────────────────┘
+                                         ▲
+                                         │ already on CDN
+                                    ┌────┴─────┐
+                                    │  Your    │
+                                    │  Frontend│
+                                    │  Deploy  │
+                                    └──────────┘
+```
+
+| | Standard MCP Apps | `@module-federation/mcp-apps` |
+|---|---|---|
+| **UI source** | Self-contained HTML bundle in MCP server | Existing MF remote on CDN |
+| **Adding a new tool** | Extract → rebuild → redeploy server | Add one line to `mcp_apps.json` |
+| **Updating UI** | Rebuild + redeploy server | Deploy new version to CDN, bump version string |
+| **Shared dependencies** | Duplicated per bundle | Shared across remotes via MF shared scope |
+| **Granularity** | One bundle per tool | Any `exposes` entry — a button, a form, a full page |
+
+---
+
+## How It Works
+
+### 1. You write a config, not a server
+
+```json
+{
+  "remotes": [
+    {
+      "name": "@my-org/ops-tools",
+      "version": "2.4.1",
+      "baseUrl": "https://cdn.example.com/ops-tools/2.4.1"
+    }
+  ],
+  "tools": [
+    {
+      "name": "deploy_wizard",
+      "title": "Deploy Wizard",
+      "description": "Interactive 3-step deployment UI",
+      "remote": "@my-org/ops-tools",
+      "module": "./DeployWizard"
+    }
+  ]
+}
+```
+
+That's it. One JSON file. No TypeScript, no server code, no build step.
+
+### 2. The MCP server reads the config and registers tools
+
+When Claude Desktop starts, `@module-federation/mcp-apps` reads `mcp_apps.json` and registers each entry as an MCP tool. The server itself is a single `npx` command:
+
+```bash
+npx -y @module-federation/mcp-apps@latest \
+  --config /path/to/mcp_apps.json \
+  --stdio
+```
+
+### 3. When a tool is called, a `ui://` resource URI is returned
+
+Claude calls `deploy_wizard` → the server generates a resource URI → Claude's host fetches the HTML → the render container iframe loads your MF component from CDN with the tool's input as props.
+
+```
+Claude: "Start a deployment"
+  → calls deploy_wizard({})
+  → server returns { uri: "ui://mf/deploy_wizard" }
+  → host fetches HTML for that URI
+  → iframe loads DeployWizard from CDN
+  → user sees multi-step form inside the chat
+```
+
+### 4. The component talks back to the AI
+
+The [MCP Apps SDK](https://github.com/modelcontextprotocol/ext-apps) gives your component a `sendMessage` function. When the user completes a step, your component sends a message back to the AI to continue the conversation or call the next tool:
+
+```tsx
+import { useMcpApp } from '@modelcontextprotocol/ext-apps/react';
+
+function DeployWizardStep1() {
+  const { sendMessage } = useMcpApp();
+
+  const handleConfirm = async (data) => {
+    await sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: `Deploy ${data.appName} to ${data.env}` }]
+    });
+  };
+
+  return <WizardUI onConfirm={handleConfirm} />;
+}
+```
+
+---
+
+## Live Demo: A 3-Step Deploy Wizard
+
+The repo ships with a working demo — a three-step deployment wizard that runs entirely inside Claude's chat window.
+
+**Step 1 — Select app and environment**
+
+The user picks an application and target environment from your real app catalog. No fake data, no hardcoded lists — the MF component fetches from your actual API.
+
+**Step 2 — Configure deployment**
+
+Docker image tag, rollback toggle, Slack notification. The component carries data forward between steps using `sendMessage` to orchestrate the next tool call.
+
+**Step 3 — Watch progress**
+
+A live deployment progress bar, then an auto-generated summary in the chat when deployment finishes.
+
+### Try it yourself
+
+```bash
+# Clone the repo
+git clone https://github.com/module-federation/mcp-apps.git
+cd mcp-apps
+
+# Start the MF remote (the UI)
+cd module-federation-examples/basic
+pnpm install && pnpm run dev
+# → http://localhost:8080
+
+# Register the MCP server in Claude Desktop
+# ~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+```json
+{
+  "mcpServers": {
+    "module-federation": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@module-federation/mcp-apps@latest",
+        "--config",
+        "/absolute/path/to/module-federation-mcp/module-federation-examples/basic/mcp_apps.json",
+        "--stdio"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop and type: **"Start a deployment"**
+
+> **nvm users:** Claude Desktop doesn't inherit your shell PATH. Use the full path to `npx` and pin `PATH` in `env`:
+> ```json
+> {
+>   "mcpServers": {
+>     "module-federation": {
+>       "command": "/Users/you/.nvm/versions/node/v22.21.1/bin/npx",
+>       "args": ["-y", "@module-federation/mcp-apps@latest", "--config", "/path/to/mcp_apps.json", "--stdio"],
+>       "env": {
+>         "PATH": "/Users/you/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+>       }
+>     }
+>   }
+> }
+> ```
+
+---
+
+## Adding It to Your Own Project
+
+If you're already using Module Federation, this is a one-afternoon integration.
+
+### Step 1: Identify your exposed components
+
+Any component in your MF remote's `exposes` map can become an MCP tool. For example, if your `module-federation.config.ts` has:
+
+```ts
+exposes: {
+  './IncidentForm': './src/components/IncidentForm',
+  './UserLookup': './src/components/UserLookup',
+}
+```
+
+You already have two MCP tool UIs ready to go.
+
+### Step 2: Generate `mcp_apps.json` with AI
+
+The repo includes an AI skill that auto-detects your MF config and generates the JSON. Drop [`skill/generate-mcp-apps-config.md`](https://github.com/module-federation/mcp-apps/blob/main/skill/generate-mcp-apps-config.md) into any AI coding tool and ask:
+
+```
+Follow skill/generate-mcp-apps-config.md to generate mcp_apps.json for my project.
+```
+
+The AI will read your `module-federation.config.ts`, detect package name and exposes, ask for your CDN URL and version, and output a ready-to-use config.
+
+Or write it manually — the schema is simple (full reference below).
+
+### Step 3: Wire up the SDK in your component (optional)
+
+To enable two-way communication between your component and the AI, add `@modelcontextprotocol/ext-apps`:
+
+```bash
+pnpm add @modelcontextprotocol/ext-apps
+```
+
+```tsx
+import { useMcpApp } from '@modelcontextprotocol/ext-apps/react';
+
+export default function IncidentForm() {
+  const mcpApp = useMcpApp(); // undefined when not in MCP context → graceful fallback
+
+  const handleSubmit = async (incident) => {
+    // Submit your incident...
+    await fetch('/api/incidents', { method: 'POST', body: JSON.stringify(incident) });
+
+    // Then tell the AI what happened
+    if (mcpApp?.sendMessage) {
+      await mcpApp.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text: `Incident #${incident.id} created — severity ${incident.severity}` }]
+      });
+    }
+  };
+
+  return <IncidentFormUI onSubmit={handleSubmit} />;
+}
+```
+
+The `useMcpApp()` hook returns `undefined` when the component is rendered outside an MCP host, so your existing UI keeps working everywhere.
+
+### Step 4: Add to Claude Desktop (`mcp_apps.json`)
+
+```json
+{
+  "remotes": [
+    {
+      "name": "@my-org/ops-tools",
+      "version": "2.4.1",
+      "baseUrl": "https://cdn.example.com/ops-tools/2.4.1",
+      "csp": {
+        "connectDomains": ["cdn.example.com", "api.example.com"],
+        "resourceDomains": ["cdn.example.com"]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "incident_form",
+      "title": "Create Incident",
+      "description": "Opens the incident reporting form with pre-filled context",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["P0", "P1", "P2", "P3"],
+            "description": "Incident severity level"
+          }
+        }
+      },
+      "remote": "@my-org/ops-tools",
+      "module": "./IncidentForm"
+    },
+    {
+      "name": "user_lookup",
+      "title": "User Lookup",
+      "description": "Search and inspect user accounts",
+      "remote": "@my-org/ops-tools",
+      "module": "./UserLookup"
+    }
+  ]
+}
+```
+
+---
+
+## Configuration Reference
+
+### Remote
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | npm package name of the MF remote |
+| `version` | string | ✅ | Version string (used for cache-busting) |
+| `baseUrl` | string | ✅ | CDN URL where `remoteEntry.js` is served |
+| `locale` | string | ❌ | Locale hint passed to the component (default: `"en"`) |
+| `csp` | object | ❌ | Allowlisted domains for `connect-src` and resource loading |
+
+### Tool
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | MCP tool identifier (used in tool calls) |
+| `title` | string | ❌ | Human-readable display name |
+| `description` | string | ❌ | Shown to the AI as tool description |
+| `inputSchema` | object | ❌ | JSON Schema for tool arguments |
+| `remote` | string | ✅ | Must match a `remotes[].name` entry |
+| `module` | string | ✅ | Module Federation expose path (e.g. `"./MyComponent"`) |
+| `exportName` | string | ❌ | Named export to use (default: `"default"`) |
+
+---
+
+## HTTP Mode for Custom Agent Frameworks
+
+Claude Desktop uses stdio. But if you're building a custom agent framework — one where the MCP client runs server-side and renders the iframe in a browser — the server also supports HTTP mode:
+
+```bash
+npx -y @module-federation/mcp-apps@latest \
+  --config /path/to/mcp_apps.json \
+  --http \
+  --port 3001
+```
+
+The HTTP server exposes:
+- `POST /mcp-rpc` — JSON-RPC endpoint for `@byted/mcp-client-sdk`
+- `GET /static/mcp-app-shell.html` — the iframe shell page
+- `GET /proxy` — CORS proxy for CDN requests that browsers would otherwise block
+
+**ByteDance internal users:** If you're on AI PAAS (the internal LangGraph-based agent platform), we have a dedicated step-by-step guide covering server-side `uiEnrichment`, front-end rendering config, and multi-step wizard patterns:
+
+- [AI PAAS Integration Guide (English)](./ai-paas-integration-guide.mdx)
+- [AI PAAS 接入指南（中文）](./ai-paas-integration-guide.zh-CN.mdx)
+
+---
+
+## Frequently Asked Questions
+
+**Does my component need to be rewritten?**
+
+No. Any React component that currently lives in an MF remote works as-is. The `useMcpApp()` hook is optional and returns `undefined` outside of an MCP context, so existing behavior is preserved.
+
+**What if the AI host doesn't support MCP Apps?**
+
+The server detects host capabilities during the MCP handshake. If the host doesn't support the MCP Apps spec, tools return plain-text responses instead of `ui://` URIs. Your tools still work — users just don't get the interactive UI.
+
+**Can I use this without Module Federation?**
+
+The `mf_render_container` shell (which handles dynamic remote loading) uses Module Federation under the hood, but your component just needs to be accessible as a standard MF remote. If you're starting fresh, the MF setup overhead is small — check [module-federation.io](https://module-federation.io) for quickstarts with Webpack, Rspack, and Vite.
+
+**Is the UI sandboxed?**
+
+Yes. The component runs in a sandboxed iframe inside the AI host. CSP is enforced via the `csp` config field in `mcp_apps.json`, which controls which domains the component can talk to.
+
+**What about authentication?**
+
+The component runs in the user's browser context (or the host's webview), so it can use cookies, tokens, or any auth mechanism your frontend already uses. The MCP server itself is stateless — it only generates the iframe HTML.
+
+---
+
+## Roadmap
+
+- **Multi-step tool chaining:** declarative `nextTool` config to wire wizard steps without writing `sendMessage` calls manually
+- **VS Code support:** render container adaptation for VS Code's webview sandbox constraints
+- **Schema-driven UI:** auto-generate simple forms from `inputSchema` for tools without a custom component
+- **Remote versioning:** smart cache invalidation and rollback support tied to `mcp_apps.json` version strings
+
+---
+
+## Get Started
+
+```bash
+# Try the demo
+git clone https://github.com/module-federation/mcp-apps.git
+cd mcp-apps/module-federation-examples/basic
+pnpm install && pnpm run dev
+```
+
+- **npm:** [`@module-federation/mcp-apps`](https://www.npmjs.com/package/@module-federation/mcp-apps)
+- **GitHub:** [module-federation/mcp-apps](https://github.com/module-federation/mcp-apps)
+- **MCP Apps spec:** [modelcontextprotocol.io/docs/extensions/apps](https://modelcontextprotocol.io/docs/extensions/apps)
+- **Module Federation:** [module-federation.io](https://module-federation.io)
+
+Issues, PRs, and feedback welcome. If you build something with this, share it — we'd love to see what tools you expose.

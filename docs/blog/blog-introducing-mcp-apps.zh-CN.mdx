@@ -1,0 +1,431 @@
+---
+title: "Module Federation MCP Apps - 把 Federated Module 暴露到 MCP Apps"
+date: "2026-03-12"
+authors: ["module-federation-team"]
+tags: ["mcp", "module-federation", "ai", "react", "微前端"]
+description: "@module-federation/mcp-apps 让你把现有前端组件直接接入 Claude、VS Code 等 AI 宿主，无需额外构建流程。"
+---
+
+# 用 Module Federation + MCP Apps 为 AI 对话带来真正的交互式 UI
+
+AI 助手不再只是一个文本框。借助 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) 标准，Claude Desktop、VS Code、Goose 等 AI 宿主可以在对话中**直接渲染可交互的 UI 组件**——表单、看板、向导、选择器，全部内嵌在聊天窗口里。
+
+但问题来了：这些 UI 从哪里来？
+
+本文介绍 **[`@module-federation/mcp-apps`](https://github.com/module-federation/mcp-apps)**——一个零额外构建的桥接层，把你现有的 Module Federation 远程组件直接接入任意 MCP 兼容的 AI 宿主。
+
+> ⭐ 如果觉得有用，欢迎给项目点个 Star：**[module-federation/mcp-apps](https://github.com/module-federation/mcp-apps)**
+
+---
+
+## 问题：UI 从哪里来？
+
+MCP Apps 规范定义了一套清晰的协议：工具被调用时，服务端可以返回一个 `ui://` 资源 URI，宿主获取它、渲染一个沙箱 iframe，用户就能在对话中看到可交互的组件。
+
+但规范没有说 **你该怎么生产那个 HTML**。最直接的做法——也是大多数示例采用的做法——是把 UI 直接打包进 MCP Server 的静态资源：
+
+```
+┌─────────────────────┐
+│  MCP Server         │
+│  ├── tool-a.html    │  ← React 应用打包在这里
+│  ├── tool-b.html    │  ← 另一个 bundle
+│  └── tool-c.html    │  ← 再一个……
+└─────────────────────┘
+```
+
+这带来一个根本性问题：**你的 UI 现在存在于两个地方。**
+
+每次组件发生变更，你都需要：
+
+1. 从主应用里把组件抽出来
+2. 用独立的打包配置重新构建
+3. 重新部署 MCP Server
+4. 祈祷 React 等共享依赖的版本不会冲突
+
+如果你有 20 个工具，就要维护 20 个独立的构建产物——一条与真实前端并行运行的"影子流水线"。
+
+---
+
+## 解决方案：翻转模型
+
+`@module-federation/mcp-apps` 反转了这个方向。Server 只持有一个轻量的配置文件（`mcp_apps.json`），指向**你现有的 Module Federation CDN 远程**。UI 留在它本来的地方——你的前端部署流水线里。
+
+```
+mcp_apps.json
+     │
+     │  "从 https://cdn.example.com/my-app@1.2.3
+     │   加载 ./DeployWizard"
+     │
+     ▼
+┌─────────────────────┐         ┌──────────────────────┐
+│  MF MCP Server      │  uri    │ mf_render_container  │
+│  （零 UI 代码）      │────────▶│  加载 MF 远程         │
+│                     │         │  渲染组件             │
+└─────────────────────┘         └──────────────────────┘
+                                         ▲
+                                         │ 已在 CDN 上
+                                    ┌────┴─────┐
+                                    │  你的前端 │
+                                    │  部署产物 │
+                                    └──────────┘
+```
+
+| | 标准 MCP Apps 做法 | `@module-federation/mcp-apps` |
+|---|---|---|
+| **UI 来源** | 打包进 MCP Server 的自包含 HTML | CDN 上的现有 MF 远程 |
+| **新增工具** | 抽取组件 → 重新构建 → 重新部署 Server | 在 `mcp_apps.json` 加一行 |
+| **更新 UI** | 重新构建 + 重新部署 Server | 部署新版本到 CDN，更新版本号字符串 |
+| **共享依赖** | 每个 bundle 各自重复打包 | 通过 MF shared scope 跨远程共享 |
+| **粒度** | 每个工具对应一个 bundle | 任意 `exposes` 条目——一个按钮、一个表单、整页 |
+
+---
+
+## 工作原理
+
+### 第一步：写配置，不写服务器
+
+```json
+{
+  "remotes": [
+    {
+      "name": "@my-org/ops-tools",
+      "version": "2.4.1",
+      "baseUrl": "https://cdn.example.com/ops-tools/2.4.1"
+    }
+  ],
+  "tools": [
+    {
+      "name": "deploy_wizard",
+      "title": "部署向导",
+      "description": "三步交互式部署 UI",
+      "remote": "@my-org/ops-tools",
+      "module": "./DeployWizard"
+    }
+  ]
+}
+```
+
+就这些。一个 JSON 文件，不需要 TypeScript、不需要服务器代码、不需要构建步骤。
+
+### 第二步：MCP Server 读取配置并注册工具
+
+Claude Desktop 启动时，`@module-federation/mcp-apps` 读取 `mcp_apps.json`，将每一项注册为 MCP 工具。启动 Server 只需一条 `npx` 命令：
+
+```bash
+npx -y @module-federation/mcp-apps@latest \
+  --config /path/to/mcp_apps.json \
+  --stdio
+```
+
+### 第三步：工具被调用时返回 `ui://` 资源 URI
+
+Claude 调用 `deploy_wizard` → Server 生成资源 URI → Claude 宿主获取 HTML → 渲染容器 iframe 从 CDN 加载你的 MF 组件，并将工具入参作为 props 传入。
+
+```
+用户："开始一次部署"
+  → 调用 deploy_wizard({})
+  → Server 返回 { uri: "ui://mf/deploy_wizard" }
+  → 宿主获取该 URI 对应的 HTML
+  → iframe 从 CDN 加载 DeployWizard
+  → 用户在聊天窗口内看到多步骤表单
+```
+
+### 第四步：组件与 AI 双向通信
+
+[MCP Apps SDK](https://github.com/modelcontextprotocol/ext-apps) 为你的组件提供了 `sendMessage` 函数。用户完成某个步骤后，组件通过它向 AI 发送消息，继续对话或触发下一个工具调用：
+
+```tsx
+import { useMcpApp } from '@modelcontextprotocol/ext-apps/react';
+
+function DeployWizardStep1() {
+  const { sendMessage } = useMcpApp();
+
+  const handleConfirm = async (data) => {
+    await sendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: `将 ${data.appName} 部署到 ${data.env}` }]
+    });
+  };
+
+  return <WizardUI onConfirm={handleConfirm} />;
+}
+```
+
+---
+
+## 实战演示：三步部署向导
+
+仓库内置了一个完整 Demo——一个完全运行在 Claude 聊天窗口内的三步部署向导。
+
+**第一步 — 选择应用和环境**
+
+用户从真实的应用目录中选择应用和目标环境。没有假数据，没有硬编码列表——MF 组件直接从你的真实 API 获取数据。
+
+**第二步 — 配置部署参数**
+
+Docker 镜像 tag、回滚开关、Slack 通知。组件通过 `sendMessage` 在步骤间传递数据，协调下一个工具调用。
+
+**第三步 — 观察部署进度**
+
+实时部署进度条，部署完成后 AI 在对话中自动生成摘要。
+
+### 本地体验
+
+```bash
+# 克隆仓库
+git clone https://github.com/module-federation/mcp-apps.git
+cd mcp-apps
+
+# 启动 MF 远程（UI 部分）
+cd module-federation-examples/basic
+pnpm install && pnpm run dev
+# → http://localhost:8080
+
+# 在 Claude Desktop 注册 MCP Server
+# 编辑 ~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+```json
+{
+  "mcpServers": {
+    "module-federation": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@module-federation/mcp-apps@latest",
+        "--config",
+        "/绝对路径/module-federation-mcp/module-federation-examples/basic/mcp_apps.json",
+        "--stdio"
+      ]
+    }
+  }
+}
+```
+
+重启 Claude Desktop，然后输入：**"开始一次部署"**
+
+> **nvm 用户注意：** Claude Desktop 不继承 shell 的 PATH 环境变量，`npx` 可能解析到错误的 Node 版本。请使用 `npx` 的完整路径并通过 `env` 固定 PATH：
+> ```bash
+> which npx  # 例如 /Users/you/.nvm/versions/node/v22.21.1/bin/npx
+> ```
+> ```json
+> {
+>   "mcpServers": {
+>     "module-federation": {
+>       "command": "/Users/you/.nvm/versions/node/v22.21.1/bin/npx",
+>       "args": ["-y", "@module-federation/mcp-apps@latest", "--config", "/路径/mcp_apps.json", "--stdio"],
+>       "env": {
+>         "PATH": "/Users/you/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+>       }
+>     }
+>   }
+> }
+> ```
+
+---
+
+## 接入你自己的项目
+
+如果你已经在使用 Module Federation，这是一个半天就能完成的集成。
+
+### 第一步：找出你要暴露的组件
+
+MF 远程 `exposes` 配置里的任意组件都可以成为 MCP 工具。例如，如果你的 `module-federation.config.ts` 里有：
+
+```ts
+exposes: {
+  './IncidentForm': './src/components/IncidentForm',
+  './UserLookup': './src/components/UserLookup',
+}
+```
+
+恭喜，你已经有两个 MCP 工具 UI 了，一行代码都不用改。
+
+### 第二步：用 AI 生成 `mcp_apps.json`
+
+仓库内置了一个 AI Skill，能自动检测你的 MF 配置并生成 JSON。把 [`skill/generate-mcp-apps-config.md`](https://github.com/module-federation/mcp-apps/blob/main/skill/generate-mcp-apps-config.md) 丢给任意 AI 编程工具并说：
+
+```
+请按照 skill/generate-mcp-apps-config.md 的指引为我的项目生成 mcp_apps.json
+```
+
+AI 会读取你的 `module-federation.config.ts`，识别包名和 exposes，询问你的 CDN 地址和版本号，然后输出一份可以直接使用的配置。
+
+或者手动写——schema 很简单（见下方配置参考）。
+
+### 第三步：在组件里接入 SDK（可选）
+
+要启用组件与 AI 的双向通信，安装 `@modelcontextprotocol/ext-apps`：
+
+```bash
+pnpm add @modelcontextprotocol/ext-apps
+```
+
+```tsx
+import { useMcpApp } from '@modelcontextprotocol/ext-apps/react';
+
+export default function IncidentForm() {
+  const mcpApp = useMcpApp(); // 在 MCP 上下文之外时返回 undefined，自动降级
+
+  const handleSubmit = async (incident) => {
+    // 提交故障单...
+    await fetch('/api/incidents', { method: 'POST', body: JSON.stringify(incident) });
+
+    // 告诉 AI 发生了什么
+    if (mcpApp?.sendMessage) {
+      await mcpApp.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text: `故障单 #${incident.id} 已创建，严重级别：${incident.severity}` }]
+      });
+    }
+  };
+
+  return <IncidentFormUI onSubmit={handleSubmit} />;
+}
+```
+
+`useMcpApp()` 在组件运行于 MCP 宿主之外时返回 `undefined`，现有 UI 在任何场景下都能正常工作。
+
+### 第四步：配置 `mcp_apps.json` 并添加到 Claude Desktop
+
+```json
+{
+  "remotes": [
+    {
+      "name": "@my-org/ops-tools",
+      "version": "2.4.1",
+      "baseUrl": "https://cdn.example.com/ops-tools/2.4.1",
+      "csp": {
+        "connectDomains": ["cdn.example.com", "api.example.com"],
+        "resourceDomains": ["cdn.example.com"]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "incident_form",
+      "title": "创建故障单",
+      "description": "打开带有预填上下文的故障报告表单",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["P0", "P1", "P2", "P3"],
+            "description": "故障严重级别"
+          }
+        }
+      },
+      "remote": "@my-org/ops-tools",
+      "module": "./IncidentForm"
+    },
+    {
+      "name": "user_lookup",
+      "title": "用户查询",
+      "description": "搜索和查看用户账户信息",
+      "remote": "@my-org/ops-tools",
+      "module": "./UserLookup"
+    }
+  ]
+}
+```
+
+---
+
+## 配置参考
+
+### Remote（远程）
+
+| 字段 | 类型 | 是否必填 | 说明 |
+|---|---|---|---|
+| `name` | string | ✅ | MF 远程的 npm 包名 |
+| `version` | string | ✅ | 版本字符串（用于缓存失效） |
+| `baseUrl` | string | ✅ | 提供 `remoteEntry.js` 的 CDN 根地址 |
+| `locale` | string | ❌ | 传给组件的语言标识（默认：`"en"`） |
+| `csp` | object | ❌ | `connect-src` 及资源加载的域名白名单 |
+
+### Tool（工具）
+
+| 字段 | 类型 | 是否必填 | 说明 |
+|---|---|---|---|
+| `name` | string | ✅ | MCP 工具标识符（工具调用时使用） |
+| `title` | string | ❌ | 人类可读的显示名称 |
+| `description` | string | ❌ | 展示给 AI 的工具描述 |
+| `inputSchema` | object | ❌ | 工具参数的 JSON Schema |
+| `remote` | string | ✅ | 必须匹配 `remotes[].name` 中的某一项 |
+| `module` | string | ✅ | Module Federation expose 路径（如 `"./MyComponent"`） |
+| `exportName` | string | ❌ | 使用的具名导出（默认：`"default"`） |
+
+---
+
+## HTTP 模式：支持自定义 Agent 框架
+
+Claude Desktop 使用 stdio。但如果你在构建自定义 Agent 框架——MCP 客户端运行在服务端、iframe 在浏览器里渲染——Server 也支持 HTTP 模式：
+
+```bash
+npx -y @module-federation/mcp-apps@latest \
+  --config /path/to/mcp_apps.json \
+  --http \
+  --port 3001
+```
+
+HTTP Server 暴露以下端点：
+- `POST /mcp-rpc` — 供 `@byted/mcp-client-sdk` 使用的 JSON-RPC 端点
+- `GET /static/mcp-app-shell.html` — iframe 壳页面
+- `GET /proxy` — 浏览器跨域请求的 CORS 代理
+
+**字节内部用户：** 如果你在使用 AI PAAS（基于 LangGraph 的内部 Agent 平台），我们提供了完整的一站式接入指南，涵盖服务端 `uiEnrichment`、前端渲染配置和多步骤向导模式：
+
+- [AI PAAS 接入指南（中文）](./ai-paas-integration-guide.zh-CN.mdx)
+- [AI PAAS Integration Guide (English)](./ai-paas-integration-guide.mdx)
+
+---
+
+## 常见问题
+
+**我的组件需要改写吗？**
+
+不需要。MF 远程里现有的任意 React 组件都可以直接用。`useMcpApp()` hook 是可选的，在 MCP 上下文之外返回 `undefined`，现有行为完全不受影响。
+
+**如果 AI 宿主不支持 MCP Apps 怎么办？**
+
+Server 在 MCP 握手阶段会检测宿主的能力。若宿主不支持 MCP Apps 规范，工具会返回纯文本响应而不是 `ui://` URI。工具依然可用，只是用户看不到交互 UI。
+
+**不用 Module Federation 能接入吗？**
+
+处理动态远程加载的 `mf_render_container` 壳内部使用了 Module Federation，但你的组件只需要能以标准 MF 远程的方式对外提供服务即可。如果从头开始搭，MF 的配置成本很小——参考 [module-federation.io](https://module-federation.io) 的 Webpack、Rspack、Vite 快速入门。
+
+**UI 有沙箱隔离吗？**
+
+有。组件运行在 AI 宿主内的沙箱 iframe 中。CSP 通过 `mcp_apps.json` 里的 `csp` 字段强制执行，控制组件可以访问哪些域名。
+
+**鉴权怎么处理？**
+
+组件运行在用户的浏览器上下文（或宿主的 webview）中，因此可以使用 cookie、token 或你前端已有的任何鉴权机制。MCP Server 本身是无状态的——它只负责生成 iframe HTML。
+
+---
+
+## Roadmap
+
+- **多步骤工具链：** 通过声明式 `nextTool` 配置串联向导步骤，无需手写 `sendMessage` 调用
+- **VS Code 支持：** 针对 VS Code webview 沙箱限制的渲染容器适配
+- **Schema 驱动 UI：** 为没有自定义组件的工具，根据 `inputSchema` 自动生成简单表单
+- **远程版本管理：** 结合 `mcp_apps.json` 版本字符串的智能缓存失效与回滚支持
+
+---
+
+## 立即开始
+
+```bash
+# 体验 Demo
+git clone https://github.com/module-federation/mcp-apps.git
+cd mcp-apps/module-federation-examples/basic
+pnpm install && pnpm run dev
+```
+
+- **npm：** [`@module-federation/mcp-apps`](https://www.npmjs.com/package/@module-federation/mcp-apps)
+- **GitHub：** [module-federation/mcp-apps](https://github.com/module-federation/mcp-apps)
+- **MCP Apps 规范：** [modelcontextprotocol.io/docs/extensions/apps](https://modelcontextprotocol.io/docs/extensions/apps)
+- **Module Federation：** [module-federation.io](https://module-federation.io)
+
+欢迎提 Issue、PR 和建议。如果你用这个工具做出了有意思的东西，非常欢迎分享——我们很期待看到大家会暴露哪些工具。
