@@ -83,7 +83,7 @@ mcp_apps.json
 
 ## How It Works
 
-### 1. You write a config, not a server
+### 1. Write a `mcp_apps.json` file
 
 ```json
 {
@@ -108,9 +108,11 @@ mcp_apps.json
 
 That's it. One JSON file. No TypeScript, no server code, no build step.
 
-### 2. The MCP server reads the config and registers tools
+### 2. Start the built-in MCP server
 
-When Claude Desktop starts, `@module-federation/mcp-apps` reads `mcp_apps.json` and registers each entry as an MCP tool. The server itself is a single `npx` command:
+`@module-federation/mcp-apps` ships a **fully [MCP Apps-compliant](https://modelcontextprotocol.io/docs/extensions/apps) MCP server** — covering tool registration, `ui://` resource URI generation, iframe shell serving, and the full handshake protocol. You don't implement any MCP logic yourself.
+
+When Claude Desktop starts, the server reads `mcp_apps.json` and automatically registers each entry as an MCP tool. Starting it is a single `npx` command:
 
 ```bash
 npx -y @module-federation/mcp-apps@latest \

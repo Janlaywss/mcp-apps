@@ -82,9 +82,9 @@ mcp_apps.json
 
 ## 工作原理
 
-### 第一步：写配置，不写服务器
+### 第一步：写一个 `mcp_apps.json`
 
-```json
+```json title="mcp_apps.json"
 {
   "remotes": [
     {
@@ -107,9 +107,11 @@ mcp_apps.json
 
 就这些。一个 JSON 文件，不需要 TypeScript、不需要服务器代码、不需要构建步骤。
 
-### 第二步：MCP Server 读取配置并注册工具
+### 第二步：启动内置的 MCP Server
 
-Claude Desktop 启动时，`@module-federation/mcp-apps` 读取 `mcp_apps.json`，将每一项注册为 MCP 工具。启动 Server 只需一条 `npx` 命令：
+`@module-federation/mcp-apps` 内置了一个**完整实现 [MCP Apps 标准](https://modelcontextprotocol.io/docs/extensions/apps)的 MCP Server**——支持工具注册、`ui://` 资源 URI 生成、iframe 壳页面服务等全链路能力，无需你自己实现任何 MCP 协议。
+
+Claude Desktop 启动时，Server 读取 `mcp_apps.json`，将每一项自动注册为 MCP 工具。启动只需一条 `npx` 命令：
 
 ```bash
 npx -y @module-federation/mcp-apps@latest \
@@ -117,9 +119,9 @@ npx -y @module-federation/mcp-apps@latest \
   --stdio
 ```
 
-### 第三步：工具被调用时返回 `ui://` 资源 URI
+### 第三步：工具被调用，Server 自动返回 `ui://` 资源 URI
 
-Claude 调用 `deploy_wizard` → Server 生成资源 URI → Claude 宿主获取 HTML → 渲染容器 iframe 从 CDN 加载你的 MF 组件，并将工具入参作为 props 传入。
+这一步全部由内置 Server 处理——你不需要编写任何路由、URI 生成或 HTML 模板逻辑。Claude 调用工具时，Server 按照 MCP Apps 协议生成 `ui://` URI；宿主凭此 URI 获取 iframe 壳页面；壳页面从 CDN 加载你的 MF 组件，并将工具入参作为 props 注入。
 
 ```
 用户："开始一次部署"
