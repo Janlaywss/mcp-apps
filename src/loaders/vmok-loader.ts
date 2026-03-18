@@ -33,7 +33,7 @@ export interface VmokSetupOptions {
  */
 export async function setupVmokManifest({
   remoteEntry: rawRemoteEntry,
-  snapshotUrl: configSnapshotUrl,
+  snapshotUrl,
   addLog,
   snapshotCache,
 }: VmokSetupOptions): Promise<string> {
@@ -41,8 +41,9 @@ export async function setupVmokManifest({
 
   initializeVMOK();
 
-  const snapshotUrl = generateSnapshotUrl(configSnapshotUrl, remoteEntry);
-  await loadAndInjectSnapshot({ snapshotUrl, addLog, snapshotCache });
+  if (snapshotUrl) {
+    await loadAndInjectSnapshot({ snapshotUrl, addLog, snapshotCache });
+  }
 
   return remoteEntry;
 }
