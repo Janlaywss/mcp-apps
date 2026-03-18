@@ -189,13 +189,14 @@ async function main() {
   //   3. ./mcp_apps.json  (default: cwd)
   let configPath: string;
   if (configPathIndex !== -1 && args[configPathIndex + 1]) {
-    configPath = args[configPathIndex + 1];
+    configPath = path.resolve(args[configPathIndex + 1]);
   } else if (process.env.MF_MCP_CONFIG) {
-    configPath = process.env.MF_MCP_CONFIG;
+    configPath = path.resolve(process.env.MF_MCP_CONFIG);
   } else {
     configPath = path.join(process.cwd(), 'mcp_apps.json');
     console.error(`[MF MCP] No --config specified, using default: ${configPath}`);
   }
+  console.error(`[MF MCP] 📄 Config: ${configPath}`);
 
   const devMode = args.includes('--dev') || process.env.NODE_ENV === 'development';
 
