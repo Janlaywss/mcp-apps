@@ -9,7 +9,7 @@
   color: #333;
   position: relative;
   min-height: 320px;
-  
+  min-width: 570px;
 }
 
 /* 错误提示 */
