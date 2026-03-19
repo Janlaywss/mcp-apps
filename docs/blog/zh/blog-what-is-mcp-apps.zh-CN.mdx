@@ -1,0 +1,198 @@
+---
+title: "什么是 MCP Apps？AI 对话里的可交互界面"
+date: "2026-03-19"
+authors: ["module-federation-team"]
+tags: ["mcp", "mcp-apps", "ai", "ui", "入门"]
+description: "MCP Apps 让 AI 宿主（Claude、VS Code、Goose 等）在对话中直接渲染可交互 UI——表单、仪表盘、向导、画板，无需切换标签页。"
+---
+
+# 什么是 MCP Apps？
+
+纯文字回应的能力是有限的。
+
+你让 AI 帮你分析数据，它输出一大段数字；你让它帮你部署一个服务，它来回问了你七个问题；你让它帮你规划项目，它给你一坨无法直接操作的文字列表。
+
+**MCP Apps** 让这件事有了另一种可能：AI 宿主在对话里直接渲染一个**可交互的 UI 界面**——数据仪表盘、操作向导、设计画板——用户不需要切换标签页，操作结果实时回传给 AI，对话继续推进。
+
+> MCP Apps 是 [Model Context Protocol](https://modelcontextprotocol.io/) 的官方扩展规范（SEP-1865），由 Anthropic 联合 OpenAI、Block、VS Code、JetBrains、AWS 共同制定。目前已在 Claude、Claude Desktop、VS Code GitHub Copilot、Goose、Postman 等客户端中支持。
+
+---
+
+## 传统 MCP 工具做不到的事
+
+传统 MCP 工具的模式是：工具调用 → 返回文本 → AI 处理 → 输出文字。
+
+这套模式可行，但有三个根本性局限。
+
+**局限一：结果不可操作**
+
+AI 告诉你"建议重启 nginx 实例"，然后呢？你还是要自己切到控制台去做。AI 是顾问，不是执行者。
+
+**局限二：多步骤任务对话成本极高**
+
+一个部署操作需要选环境、填配置、确认参数、监控执行——靠对话完成，AI 和用户之间要来回确认七八轮，中途上下文一断就得从头说。步骤越多，出错概率越高。
+
+**局限三：上下文窗口是有限资源**
+
+你挂了 10 个 MCP Server，每个有 5 个工具，工具名、描述、参数 Schema 全部占用上下文——AI 还没开始干活，几千个 Token 就没了。工具越多，AI 越贵，推理质量还越差。
+
+---
+
+## MCP Apps 怎么解决这些问题
+
+MCP Apps 的核心思路是：把 UI 层引入 MCP 协议。
+
+工具不再只是"函数 + 返回值"，工具可以**声明一个 UI 资源**。当 LLM 决定调用这个工具时：
+
+1. 宿主从服务端获取 UI 资源（一个打包好的 HTML 页面）
+2. 在对话窗口里以**沙箱 iframe** 的形式渲染它
+3. UI 与服务端之间通过 postMessage 协议**双向通信**
+4. 用户操作完成后，结果回传给 AI，继续推进任务
+
+```
+用户                AI 宿主              MCP Server         MCP App UI
+ │                   │                     │                    │
+ │  "帮我部署一下"    │                     │                    │
+ │──────────────────▶│                     │                    │
+ │                   │── tools/call ──────▶│                    │
+ │                   │◀─ tool result ──────│                    │
+ │                   │── 获取 UI 资源 ─────▶│                    │
+ │                   │◀─ HTML返回 ──────────│                    │
+ │◀──────────── 渲染部署向导 ──────────────────────────────────────│
+ │  在 UI 里填表单    │                     │                    │
+ │──────────────────────────────────────────────────────────────▶│
+ │                   │                     │◀── callServerTool ─│
+ │                   │                     │─── 执行部署 ────────│
+ │◀── 进度条更新 ─────────────────────────────────────────────────│
+ │                   │◀── 操作完成，结果上下文 ────────────────────│
+```
+
+---
+
+## 适合用 MCP Apps 的场景
+
+**探索复杂数据**
+
+用户问"按地区显示销售额"。文字只能列数字，MCP App 渲染一张可下钻的交互地图——点击区域、悬停看详情、切换指标，无需追加任何提示词。
+
+**配置多选项操作**
+
+部署环境有几十个相互依赖的选项。与其来回对话问七遍，MCP App 直接呈现一个带校验和默认值的表单，用户一次看完所有选项。
+
+**展示富媒体内容**
+
+查阅 PDF、预览 3D 模型、查看生成图片——文字描述远远不够。MCP App 在对话里嵌入真正的查看器，支持平移、缩放、旋转。
+
+**实时监控**
+
+系统状态仪表盘需要持续更新。MCP App 维持持久连接，数据变化时自动刷新，不需要用户反复问"现在状态怎么样"。
+
+**多步骤工作流**
+
+审批报销单、发布流程、问题分类——MCP App 提供导航控件、操作按钮，以及跨交互保持的状态。用户不用记"我们走到第几步了"，界面告诉他。
+
+---
+
+## 为什么不直接做一个独立的 Web App？
+
+你完全可以做一个独立页面然后给用户发链接，但 MCP Apps 有几个独立页面匹配不了的优势：
+
+| | 独立 Web App | MCP App |
+|---|---|---|
+| 上下文保留 | 用户需要切 Tab，和 AI 的对话上下文断开 | UI 就在对话里，对话不中断 |
+| 数据流 | 需要自己做 API、认证、状态管理 | 直接调用 MCP 工具，宿主负责安全代理 |
+| 宿主能力集成 | 需要自己对接每个服务（邮件、日历等） | 请求宿主路由给用户已连接的能力 |
+| 安全隔离 | 完全信任第三方服务 | 沙箱 iframe，无法访问父页面 DOM、Cookie |
+
+---
+
+## 安全沙箱
+
+MCP App UI 运行在宿主控制的沙箱 iframe 中，无法：
+
+- 访问父窗口的 DOM
+- 读取宿主的 Cookie 或 localStorage
+- 导航父页面
+- 在父页面上下文中执行脚本
+
+所有通信通过 postMessage 进行，宿主控制 App 能访问哪些能力（可以限制可调用的工具，或禁用部分 API），宿主无需完全信任服务端作者就能安全渲染第三方 App。
+
+---
+
+## 技术实现：工具 + 资源两个原语
+
+MCP Apps 的实现结合了两个 MCP 原语：
+
+**工具（Tool）**：在描述中声明 `_meta.ui.resourceUri` 字段，指向一个 `ui://` 格式的资源 URI。
+
+```typescript
+registerAppTool(server, "deploy-wizard", {
+  title: "Deploy Wizard",
+  description: "部署应用的向导界面",
+  inputSchema: {},
+  _meta: {
+    ui: { resourceUri: "ui://deploy-wizard/app.html" }
+  },
+}, async () => { /* 工具逻辑 */ });
+```
+
+**资源（Resource）**：服务端提供对应的 HTML 资源，宿主获取并渲染。
+
+```typescript
+registerAppResource(server, resourceUri, resourceUri,
+  { mimeType: RESOURCE_MIME_TYPE },
+  async () => ({
+    contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+  }),
+);
+```
+
+**UI 端**：使用 `App` 类与宿主建立通信，接收工具结果、主动调用工具。
+
+```typescript
+import { App } from "@modelcontextprotocol/ext-apps";
+
+const app = new App({ name: "Deploy Wizard", version: "1.0.0" });
+app.connect();
+
+// 接收宿主推送的工具结果
+app.ontoolresult = (result) => { /* 初始化 UI */ };
+
+// 主动触发下一步
+submitBtn.addEventListener("click", async () => {
+  const result = await app.callServerTool({ name: "deploy", arguments: formData });
+  // 处理结果，更新 UI
+});
+```
+
+MCP Apps 使用 postMessage 作为传输层（并非 stdio 或 HTTP），你可以使用任意前端框架——React、Vue、Svelte、Solid，或原生 JavaScript。官方提供了各框架的[入门模板](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples)。
+
+---
+
+## 真实示例
+
+[ext-apps 官方仓库](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples)里有大量可直接运行的示例：
+
+- **3D 可视化**：CesiumJS 地球仪、Three.js 场景、Shader 特效
+- **数据探索**：队列热力图、客户分群、Wikipedia 知识图
+- **业务应用**：场景建模、预算分配
+- **媒体**：PDF 阅读、视频播放、乐谱渲染、语音转文字
+- **工具类**：二维码生成、系统监控
+
+---
+
+## 在 Module Federation 项目里怎么用？
+
+如果你已经有 Module Federation 远程组件，[`@module-federation/mcp-apps`](https://github.com/module-federation/mcp-apps) 让你不需要额外维护一套 MCP 打包流水线——MCP Server 直接从你现有的 CDN 远程加载组件，UI 留在它本来的地方。
+
+详见：[Module Federation MCP Apps 集成指南](./blog-introducing-mcp-apps.zh-CN.mdx)。
+
+---
+
+## 延伸阅读
+
+- [MCP Apps 官方文档](https://apps.extensions.modelcontextprotocol.io/)
+- [MCP Apps 概览（中文翻译）](../zh/official-overview.md)
+- [构建你的第一个 MCP App（中文翻译）](../zh/official-build-guide.md)
+- [客户端支持矩阵](https://modelcontextprotocol.io/extensions/client-matrix)
+- [ext-apps GitHub 仓库](https://github.com/modelcontextprotocol/ext-apps)

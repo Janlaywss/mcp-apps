@@ -1,0 +1,198 @@
+---
+title: "What Are MCP Apps? Interactive UI Inside AI Conversations"
+date: "2026-03-19"
+authors: ["module-federation-team"]
+tags: ["mcp", "mcp-apps", "ai", "ui", "introduction"]
+description: "MCP Apps let AI hosts like Claude, VS Code, and Goose render interactive UI directly inside conversations — forms, dashboards, wizards, canvases — without switching tabs."
+---
+
+# What Are MCP Apps?
+
+Plain text responses have a ceiling.
+
+You ask an AI to analyze data and get a wall of numbers. You ask it to deploy a service and spend seven back-and-forth messages answering clarifying questions. You ask it to plan a project and get a text list you can't act on directly.
+
+**MCP Apps** open up a different possibility: an AI host renders a fully **interactive UI** — a data dashboard, an operations wizard, a design canvas — right inside the conversation. No tab switching. User actions flow back to the AI in real time, and the conversation keeps moving.
+
+> MCP Apps is the official extension specification (SEP-1865) for the [Model Context Protocol](https://modelcontextprotocol.io/), co-authored by Anthropic, OpenAI, Block, VS Code, JetBrains, and AWS. It is already supported in Claude, Claude Desktop, VS Code GitHub Copilot, Goose, Postman, and others.
+
+---
+
+## What Traditional MCP Tools Can't Do
+
+Traditional MCP tools follow one pattern: tool call → return text → AI processes → output text.
+
+That works, but it has three fundamental limitations.
+
+**Limitation 1: Results aren't actionable**
+
+The AI tells you "I recommend restarting the nginx instance." Then what? You still have to switch to the console and do it yourself. The AI is an advisor, not an executor.
+
+**Limitation 2: Multi-step tasks have enormous conversation overhead**
+
+A deployment requires choosing an environment, filling out config, confirming parameters, and watching execution. Seven or eight rounds of back-and-forth later, one context break and you're starting over. More steps means more failure surface.
+
+**Limitation 3: Context windows are a finite resource**
+
+Ten MCP Servers × five tools each means tool names, descriptions, and parameter schemas all eating tokens before the AI has done anything useful. More tools = higher cost, lower reasoning quality.
+
+---
+
+## How MCP Apps Solve These Problems
+
+MCP Apps bring a UI layer into the MCP protocol.
+
+Tools are no longer just "function + return value." A tool can **declare a UI resource**. When the LLM decides to call that tool:
+
+1. The host fetches the UI resource from the server (a bundled HTML page)
+2. The host renders it as a **sandboxed iframe** inside the conversation
+3. The UI and server communicate bidirectionally over postMessage
+4. When the user finishes, the result is passed back to the AI and the task continues
+
+```
+User               AI Host              MCP Server          MCP App UI
+ │                   │                     │                    │
+ │  "Deploy this"    │                     │                    │
+ │──────────────────▶│                     │                    │
+ │                   │── tools/call ──────▶│                    │
+ │                   │◀─ tool result ──────│                    │
+ │                   │── fetch UI ────────▶│                    │
+ │                   │◀─ HTML ─────────────│                    │
+ │◀──────────── render deploy wizard ──────────────────────────│
+ │  fill the form    │                     │                    │
+ │──────────────────────────────────────────────────────────────▶│
+ │                   │                     │◀── callServerTool ─│
+ │                   │                     │─── run deploy ─────│
+ │◀── progress bar update ────────────────────────────────────────│
+ │                   │◀── done, result in context ────────────────│
+```
+
+---
+
+## When to Use MCP Apps
+
+**Exploring complex data**
+
+The user asks "show me sales by region." Text can only list numbers. An MCP App renders an interactive map — click to drill down, hover for details, switch metrics — no follow-up prompts needed.
+
+**Configuring multi-option operations**
+
+Setting up a deployment environment involves dozens of interdependent options. Rather than answer seven questions in sequence, an MCP App presents a form with validation and defaults all at once.
+
+**Displaying rich media**
+
+Reading a PDF, previewing a 3D model, viewing a generated image — text descriptions fall short. An MCP App embeds a real viewer inside the conversation, with pan, zoom, and rotate.
+
+**Real-time monitoring**
+
+A system status dashboard needs continuous updates. An MCP App maintains a persistent connection and refreshes automatically when data changes — no need to keep asking "what's the status now?"
+
+**Multi-step workflows**
+
+Approving expense reports, managing a release process, triaging issues — an MCP App provides navigation controls, action buttons, and state that persists across interactions. The UI tracks where you are so you don't have to.
+
+---
+
+## Why Not Just Build a Standalone Web App?
+
+You could build a separate page and send users a link. But MCP Apps have a few advantages that standalone pages can't match:
+
+**Context stays intact.** The UI lives inside the conversation — no tab switch, no broken thread with the AI.
+
+**No API plumbing required.** Call MCP tools directly; the host handles secure proxying.
+
+**Host capabilities are available.** Request that the host route actions through capabilities the user has already connected (email, calendar, etc.) — no separate OAuth flows.
+
+**Security isolation.** A sandboxed iframe can't touch the parent page's DOM, cookies, or localStorage. The host doesn't need to fully trust the server author to safely render a third-party App.
+
+---
+
+## The Security Sandbox
+
+MCP App UI runs in a sandboxed iframe controlled by the host. It cannot:
+
+- Access the parent window's DOM
+- Read the host's cookies or localStorage
+- Navigate the parent page
+- Execute scripts in the parent context
+
+All communication goes through postMessage. The host controls which capabilities the App can access — it can restrict which tools are callable or disable certain APIs. Third-party Apps can be rendered safely without unconditional trust.
+
+---
+
+## How It Works: Two MCP Primitives
+
+MCP Apps combine two existing MCP primitives.
+
+**Tool**: declares a `_meta.ui.resourceUri` field pointing to a `ui://` resource URI.
+
+```typescript
+registerAppTool(server, "deploy-wizard", {
+  title: "Deploy Wizard",
+  description: "Interactive wizard for deploying an application",
+  inputSchema: {},
+  _meta: {
+    ui: { resourceUri: "ui://deploy-wizard/app.html" }
+  },
+}, async () => { /* tool logic */ });
+```
+
+**Resource**: the server provides the corresponding HTML; the host fetches and renders it.
+
+```typescript
+registerAppResource(server, resourceUri, resourceUri,
+  { mimeType: RESOURCE_MIME_TYPE },
+  async () => ({
+    contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+  }),
+);
+```
+
+**UI side**: the `App` class establishes communication with the host, receives tool results, and calls tools directly.
+
+```typescript
+import { App } from "@modelcontextprotocol/ext-apps";
+
+const app = new App({ name: "Deploy Wizard", version: "1.0.0" });
+app.connect();
+
+// Receive the initial tool result pushed by the host
+app.ontoolresult = (result) => { /* initialize UI */ };
+
+// Trigger the next step from the UI
+submitBtn.addEventListener("click", async () => {
+  const result = await app.callServerTool({ name: "deploy", arguments: formData });
+  // handle result, update UI
+});
+```
+
+MCP Apps use postMessage as the transport layer (not stdio or HTTP), so you can use any frontend framework — React, Vue, Svelte, Solid, or vanilla JavaScript. The official repo includes [starter templates for each](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples).
+
+---
+
+## Real Examples
+
+The [ext-apps official repository](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples) has a wide range of runnable examples:
+
+- **3D visualization**: CesiumJS globe, Three.js scenes, shader effects
+- **Data exploration**: queue heatmaps, customer segmentation, Wikipedia knowledge graph
+- **Business applications**: scenario modelling, budget allocation
+- **Media**: PDF reader, video playback, sheet music renderer, speech-to-text
+- **Utilities**: QR code generator, system monitoring
+
+---
+
+## Using MCP Apps with Module Federation
+
+If you already have Module Federation remote components, [`@module-federation/mcp-apps`](https://github.com/module-federation/mcp-apps) means you don't need a separate MCP build pipeline. The MCP Server loads your components directly from your existing CDN remote at runtime — the UI stays exactly where it already lives.
+
+See: [Module Federation MCP Apps Integration Guide](./blog-introducing-mcp-apps.mdx).
+
+---
+
+## Further Reading
+
+- [MCP Apps Official Docs](https://apps.extensions.modelcontextprotocol.io/)
+- [Build Your First MCP App](../en/official-build-guide.md)
+- [Client Support Matrix](https://modelcontextprotocol.io/extensions/client-matrix)
+- [ext-apps GitHub Repository](https://github.com/modelcontextprotocol/ext-apps)
