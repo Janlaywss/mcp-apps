@@ -108,6 +108,8 @@ mcp_apps.json
 
 That's it. One JSON file. No TypeScript, no server code, no build step.
 
+> **Want the full field reference?** See [mcp_apps.json Complete Guide](../en/mcp_apps_json.md) for a detailed explanation of every field, CSP configuration rules, and the exact mapping between `mcp_apps.json` and your `module-federation.config.ts`.
+
 ### 2. Start the built-in MCP server
 
 `@module-federation/mcp-apps` ships a **fully [MCP Apps-compliant](https://modelcontextprotocol.io/docs/extensions/apps) MCP server** — covering tool registration, `ui://` resource URI generation, iframe shell serving, and the full handshake protocol. You don't implement any MCP logic yourself.
@@ -337,6 +339,8 @@ export default function IncidentForm({ mcpApp }: { mcpApp?: McpApp }) {
 ---
 
 ## Configuration Reference
+
+> This is a quick-reference summary. For detailed field descriptions, constraints, CSP setup rules, and the complete mapping to Module Federation config, see the [mcp_apps.json Complete Guide](../en/mcp_apps_json.md).
 
 ### Remote
 
