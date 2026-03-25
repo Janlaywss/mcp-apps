@@ -110,12 +110,29 @@ async function startStreamableHTTPServer(
       const server = await createServerFn(shellBaseUrl);
       const requestBody = req.body;
 
+      // JSON-RPC notifications have no `id`. The MCP server processes them but
+      // never sends a response, so we must NOT wait for `onmessage` — doing so
+      // would block forever and the FaaS gateway would return 504.
+      // Detect notifications: has `method` but no `id` (or id is null/undefined).
+      const isNotification =
+        typeof requestBody?.method === "string" &&
+        (requestBody.id === undefined || requestBody.id === null);
+
       // We need the server's registered handlers. Use InMemoryTransport to proxy the request.
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
       await server.connect(serverTransport);
 
-      // Send the request through the in-memory transport and collect the response
+      if (isNotification) {
+        // Notifications don't get a response — send and return 202 Accepted immediately.
+        await clientTransport.send(requestBody);
+        await server.close();
+        res.status(202).send();
+        return;
+      }
+
+      // Send the request through the in-memory transport and collect the response.
+      // Set up onmessage BEFORE send to avoid missing a synchronous response.
       const responsePromise = new Promise<any>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("MCP request timed out")), 30000);
         clientTransport.onmessage = (msg: any) => {

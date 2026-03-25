@@ -58,7 +58,7 @@ export interface UseRemoteComponentResult {
 export function useRemoteComponent({
   config,
   onLog,
-  loadTimeoutMs = 20000,
+  loadTimeoutMs = 200000,
   deps,
 }: UseRemoteComponentOptions): UseRemoteComponentResult {
   const [component, setComponent] = useState<any>(null);
